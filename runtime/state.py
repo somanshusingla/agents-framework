@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ToolCall(BaseModel):
     call_id: str
     tool_name: str
-    args: dict
+    args: dict[str, Any]
     approval_required: bool = False
 
 
@@ -43,4 +43,5 @@ class WorkflowResponse(BaseModel):
     thread_id: str
     status: str
     output: str | None = None
-    tool_calls: list[dict[str, Any]] = []
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    usage: dict[str, int] = Field(default_factory=dict)

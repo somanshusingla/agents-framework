@@ -11,5 +11,5 @@ class ToolRegistry:
     def get(self, name: str) -> BaseTool | None:
         return self._tools.get(name)
 
-    def list(self) -> list[BaseTool]:
-        return list(self._tools.values())
+    def specs(self) -> list[dict]:
+        return [{"name": t.name, "description": t.description, "approval_required": t.approval_required} for t in self._tools.values()]
