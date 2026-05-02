@@ -45,3 +45,4 @@ class WorkflowResponse(BaseModel):
     output: str | None = None
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     usage: dict[str, int] = Field(default_factory=dict)
+    pending_approval: list[ToolCall] = Field(default_factory=list)

@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from llm.types import LlmRequest
 from runtime.graph import build_graph
-from runtime.state import WorkflowResponse, ExecutionEvent
+from runtime.state import WorkflowResponse, ExecutionEvent, ToolCall
 from llm.base import LlmClient
 from guardrails.policies import AllowAllGuardrail
 from tools.registry import ToolRegistry
@@ -21,13 +22,14 @@ class Orchestrator:
         self.sessions = SessionManager()
         self.tracer = LangSmithTracer()
         self.jobs: dict[str, dict] = {}
+        self.pending_approvals: dict[str, list[ToolCall]] = {}
 
     async def invoke(self, thread_id: str, text: str) -> WorkflowResponse:
         run_id = str(uuid.uuid4())
         with self.tracer.span("workflow.invoke", {"thread_id": thread_id, "run_id": run_id}):
             result = await self.graph.ainvoke({"input_text": text})
         status = "blocked" if result.get("blocked") else "completed"
-        response = WorkflowResponse(run_id=run_id, thread_id=thread_id, status=status, output=result.get("output"))
+        response = WorkflowResponse(run_id=run_id, thread_id=thread_id, status=status, output=result.get("output"), usage=result.get("usage", {}))
         await self.sessions.append_event(
             ExecutionEvent(id=str(uuid.uuid4()), thread_id=thread_id, run_id=run_id, seq_no=1, ts=datetime.now(timezone.utc), event_type="final_output", payload=response.model_dump())
         )
@@ -53,7 +55,7 @@ class Orchestrator:
         run_id = str(uuid.uuid4())
         yield {"event": "run.started", "run_id": run_id, "thread_id": thread_id}
         client = LlmClient()
-        async for tok in client.stream(__import__('llm.types', fromlist=['LlmRequest']).LlmRequest(prompt=text)):
+        async for tok in client.stream(LlmRequest(prompt=text)):
             yield {"event": "llm.token", "run_id": run_id, "thread_id": thread_id, "data": {"text": tok}}
         res = await self.invoke(thread_id, text)
         yield {"event": "run.completed", "run_id": run_id, "thread_id": thread_id, "data": res.model_dump()}
