@@ -161,6 +161,13 @@ Storage/presentation split:
 
 - Structured logs, trace events, metrics export.
 
+### 3.8 Library-First Packaging
+
+- The framework is shipped as an embeddable Python library, not a required multi-container deployment.
+- The FastAPI app remains optional as a transport adapter that can be mounted by host applications.
+- Extension points are exposed as registries: tool registration, model client injection, and guardrail policy injection.
+- Teams can compose only the modules they need (runtime-only, API+runtime, or custom transports).
+
 ---
 
 ## 4. Architecture Diagrams

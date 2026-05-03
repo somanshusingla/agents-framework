@@ -30,6 +30,12 @@ This LLD translates `BOOK_GROUNDED_LANGGRAPH_AGENT_FRAMEWORK_PLAN.md` and `docs/
 - **Serialization**: Pydantic models for API contracts and state payloads.
 - **Streaming**: SSE endpoint emitting graph progress and model token/custom events.
 
+### 1.4 Packaging Direction
+
+- Primary distribution is a Python library that host applications import directly.
+- `api/` is an optional adapter layer and should not own business logic.
+- Registries provide integration points for host implementations (tools, LLM client, guardrails).
+
 ---
 
 ## 2. Package Structure (`agent_framework/`)
