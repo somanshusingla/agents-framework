@@ -1,68 +1,100 @@
-# SDK Guide: Building Agent Applications with `book-grounded-langgraph-agent`
+# SDK Guide: Building Config-Driven ReAct Agents
 
-This project can now be consumed as a Python library. You compose the runtime by registering tools/workflows and optionally injecting your own implementations for LLM, guardrails, sessions, and tracing.
+The framework is now exposed as the `agent_framework` package. It provides one reusable
+ReAct graph template that can be configured per agent with YAML, Python tool classes,
+and optional policy/bootstrap hooks.
 
-## SDK Components
+## Agent Config
 
-- `sdk.tools`: Tool contracts and tool wrappers (`BaseTool`, `FunctionTool`, `AgentTool`).
-- `sdk.llm`: LLM protocol (`LlmClientProtocol`).
-- `sdk.guardrails`: Guardrail policy protocol (`GuardrailPolicyProtocol`).
-- `sdk.sessions`: Session persistence protocol (`SessionManagerProtocol`).
-- `sdk.tracing`: Tracing protocol (`TracerProtocol`).
-- `sdk.platform`: Library composition root (`AgentPlatformLibrary`).
+```yaml
+agent:
+  name: support-agent
+  workflow: react
+  system_prompt: "You are a concise support agent."
 
-## Quick Start
+tools:
+  enabled:
+    - plan
+    - reflect
+    - lookup_account
+    - final_answer
+  compaction_overrides:
+    lookup_account: truncate
 
-```python
-from sdk import AgentPlatformLibrary, FunctionTool
+runtime:
+  max_steps: 8
+  required_first_tool: plan
+  final_tool: final_answer
 
-platform = AgentPlatformLibrary()
-platform.register_tool(
-    FunctionTool(
-        name="weather_lookup",
-        description="Look up weather by city",
-        fn=lambda city: {"city": city, "forecast": "sunny"},
-    )
-)
-orchestrator = platform.build()
-
-# await orchestrator.invoke(thread_id="t-1", text="tool:weather_lookup {\"city\":\"Austin\"}")
+context:
+  strategy: hierarchical
+  token_threshold: 50000
+  keep_recent: 10
+  tool_result_threshold: 1000
 ```
 
-## Registering Custom Workflows
+Load it with:
 
 ```python
-async def summarize_workflow(text: str) -> str:
-    return f"Summary: {text[:100]}"
+from agent_framework import AgentPlatformLibrary
 
-platform.register_workflow("summarize", summarize_workflow)
-orchestrator = platform.build()
-# await orchestrator.invoke("thread-1", "long input", workflow_name="summarize")
+platform = AgentPlatformLibrary.from_config("agent.yaml")
 ```
 
-## Injecting Custom Component Implementations
+## Tool Classes
 
-### Custom LLM
-Implement `complete` and `stream` methods compatible with `LlmClientProtocol`.
+Tools are regular Python classes. Config chooses which registered tools are enabled.
 
-### Custom Guardrails
-Implement `validate_input` and `validate_output` returning `GuardrailResult`.
+```python
+from pydantic import BaseModel
+from agent_framework import BaseTool, ToolExecutionContext, ToolExecutionResult
 
-### Custom Session Store
-Implement `load_events` and `append_event` methods compatible with `SessionManagerProtocol`.
+class LookupArgs(BaseModel):
+    account_id: str
 
-### Custom Tracing
-Implement `span(name, attrs)` context manager compatible with `TracerProtocol`.
+class LookupAccountTool(BaseTool):
+    name = "lookup_account"
+    description = "Look up account details by account id."
+    args_schema = LookupArgs
 
-## API Adapter vs Library Use
+    async def execute(self, context: ToolExecutionContext, args: LookupArgs):
+        return ToolExecutionResult(
+            content=f"Account {args.account_id} is active.",
+            artifact={"account_id": args.account_id},
+        )
+```
 
-- Use `api/app.py` if you want ready-made REST/SSE endpoints.
-- Use `sdk/platform.py` directly when embedding in your own app/service.
+Register and run:
 
-## Production Integration Notes
+```python
+platform.register_tool(LookupAccountTool())
+orchestrator = platform.build()
+response = await orchestrator.invoke("thread-1", "Check account A123")
+```
 
-1. Register business tools in platform startup, not per-request.
-2. Use deterministic tool names and version them if behavior changes.
-3. Inject enterprise guardrails and tracing for compliance.
-4. Persist session events to durable storage for replay/debugging.
-5. Use custom workflows for domain-specific orchestration.
+## Reusable Graph
+
+All configured agents use the same `build_react_graph(...)` template unless a host
+application explicitly registers a custom workflow. Domain behavior belongs in:
+
+- system prompts
+- tool implementations
+- YAML runtime/context settings
+- optional bootstrap hooks
+- optional tool-call policy hooks
+
+The graph itself stays generic: initialize, validate, compact context, call the LLM,
+execute tools, repeat, finalize, validate output, and persist events.
+
+## Context Compaction
+
+The default optimizer keeps raw history in state/session and sends a compact projection
+to the LLM. It:
+
+1. does nothing below the configured threshold,
+2. compacts deterministic tool calls/results first,
+3. preserves the original task and recent messages,
+4. summarizes older intermediate work only when still over threshold.
+
+Each tool can provide a default compaction strategy, and YAML can override strategies
+by tool name.

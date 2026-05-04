@@ -1,12 +1,13 @@
 [project]
-name = "book-grounded-langgraph-agent"
+name = "agent-framework"
 version = "0.1.0"
-description = "Book-grounded LangGraph agent framework"
+description = "Reusable config-driven LangGraph agent framework"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.30",
   "pydantic>=2.8",
+  "pyyaml>=6.0",
   "langgraph>=0.2.30",
   "sqlalchemy>=2.0",
   "aiosqlite>=0.20",
