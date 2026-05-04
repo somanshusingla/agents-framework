@@ -12,6 +12,15 @@ agent:
   workflow: react
   system_prompt: "You are a concise support agent."
 
+model:
+  provider: openai
+  name: gpt-5.4-mini
+  temperature: 0
+  max_tokens: 4096
+
+persistence:
+  backend: sqlite
+
 tools:
   enabled:
     - plan
@@ -31,6 +40,9 @@ context:
   token_threshold: 50000
   keep_recent: 10
   tool_result_threshold: 1000
+  summarization:
+    strategy: llm
+    keep_recent: 5
 ```
 
 Load it with:
@@ -74,7 +86,8 @@ response = await orchestrator.invoke("thread-1", "Check account A123")
 
 ## Reusable Graph
 
-All configured agents use the same `build_react_graph(...)` template unless a host
+All configured agents use `ReactGraphBuilder` through the compatibility
+`build_react_graph(...)` template unless a host
 application explicitly registers a custom workflow. Domain behavior belongs in:
 
 - system prompts
@@ -94,7 +107,18 @@ to the LLM. It:
 1. does nothing below the configured threshold,
 2. compacts deterministic tool calls/results first,
 3. preserves the original task and recent messages,
-4. summarizes older intermediate work only when still over threshold.
+4. summarizes older intermediate work with the configured summarizer only when still over threshold.
 
 Each tool can provide a default compaction strategy, and YAML can override strategies
 by tool name.
+
+## Provider And Backend Extension
+
+LLM providers are factory-based. Built-ins include `openai`, `anthropic`, and
+`deepseek`; custom providers can be registered with `register_llm_provider(...)`
+or the `@llm_provider(...)` decorator.
+
+Session persistence is also factory-based. Built-ins include `sqlite`, `memory`,
+and `noop`; custom backends can be registered with `register_session_backend(...)`
+or the `@session_backend(...)` decorator. `AgentPlatformLibrary.from_config(...)`
+binds both implementations during bootstrap.

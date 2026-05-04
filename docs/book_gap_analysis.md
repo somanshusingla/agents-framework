@@ -6,9 +6,9 @@ The following book-aligned layers remain incomplete or intentionally basic.
 
 ## Missing Or Shallow Layers
 
-- **Provider LLM adapters**: the current default LLM is a deterministic local test client.
-  Production adapters for OpenAI-compatible, Anthropic, and streaming tool-call deltas are
-  still needed.
+- **Provider LLM adapters**: built-in factory adapters now cover OpenAI, Anthropic,
+  and DeepSeek, and hosts can register additional providers. Richer provider-specific
+  streaming tool-call deltas may still need deeper adapter support.
 - **Human-in-the-loop approvals**: tools can declare `approval_required`, and the graph can
   return `waiting_approval`, but durable pause/resume APIs and approval decisions are not
   implemented end to end.
@@ -26,12 +26,13 @@ The following book-aligned layers remain incomplete or intentionally basic.
   specialist agent routing, and isolated context per sub-agent are not implemented.
 - **Evaluation layer**: no replay harness, benchmark runner, or LLM-as-judge evaluation
   hooks exist yet.
-- **Observability depth**: tracing is a stub. Node/tool/model spans, token metrics,
-  tool-frequency metrics, and guardrail metrics need real implementations.
+- **Observability depth**: LangSmith spans now wrap node/tool/model boundaries with
+  token/tool metadata when tracing is enabled. Guardrail-specific metrics and richer
+  aggregate dashboards still need implementation.
 - **Config hook loading**: config models include hook paths, but dynamic import and validation
   for bootstrap/tool-call policy hooks still need implementation.
-- **Semantic summarization**: context summarization is deterministic and cheap today. A real
-  LLM-backed summarizer should be added as an optional strategy after deterministic compaction.
+- **Semantic summarization**: LLM-backed summarization is now available after deterministic
+  compaction. More domain-specific summarizer prompts and evals can still be added.
 
 ## Planning And Reflection Status
 

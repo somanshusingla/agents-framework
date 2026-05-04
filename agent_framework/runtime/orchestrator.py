@@ -6,11 +6,11 @@ from typing import Any, Awaitable, Callable
 
 from agent_framework.config import AgentSpec
 from agent_framework.guardrails.policies import AllowAllGuardrail
-from agent_framework.llm.base import LlmClient
+from agent_framework.llm.factory import create_llm_client
 from agent_framework.llm.types import LlmRequest
-from agent_framework.memory.session_manager import SessionManager
+from agent_framework.memory.session_manager import SessionManagerProtocol, create_session_manager
 from agent_framework.observability.langsmith import LangSmithTracer
-from agent_framework.runtime.graph import build_react_graph
+from agent_framework.runtime.graph import ReactGraphBuilder
 from agent_framework.runtime.state import WorkflowResponse
 from agent_framework.tools.registry import ToolRegistry
 
@@ -23,22 +23,22 @@ class Orchestrator:
         registry: ToolRegistry | None = None,
         llm_client: object | None = None,
         guardrail_policy: object | None = None,
-        session_manager: SessionManager | None = None,
+        session_manager: SessionManagerProtocol | None = None,
         tracer: LangSmithTracer | None = None,
     ) -> None:
         self.spec = spec or AgentSpec()
         self.registry = registry or ToolRegistry()
-        self.llm_client = llm_client or LlmClient()
+        self.llm_client = llm_client or create_llm_client(self.spec.model)
         self.guardrail_policy = guardrail_policy or AllowAllGuardrail()
-        self.sessions = session_manager or SessionManager()
+        self.sessions = session_manager or create_session_manager(self.spec.persistence)
         self.tracer = tracer or LangSmithTracer()
-        self.graph = build_react_graph(
-            self.spec,
-            self.registry,
-            self.llm_client,
-            self.sessions,
-            self.guardrail_policy,
-            self.tracer,
+        self.graph = (
+            ReactGraphBuilder(self.spec, self.registry)
+            .with_llm_client(self.llm_client)
+            .with_session_manager(self.sessions)
+            .with_guardrails(self.guardrail_policy)
+            .with_tracer(self.tracer)
+            .build()
         )
         self.jobs: dict[str, dict[str, Any]] = {}
         self.workflows: dict[str, Callable[[str], Awaitable[str]]] = {}

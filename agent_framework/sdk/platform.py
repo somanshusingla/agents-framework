@@ -6,8 +6,8 @@ from typing import Awaitable, Callable
 
 from agent_framework.config import AgentSpec, load_agent_spec
 from agent_framework.guardrails.policies import AllowAllGuardrail
-from agent_framework.llm.base import LlmClient
-from agent_framework.memory.session_manager import SessionManager
+from agent_framework.llm.factory import create_llm_client
+from agent_framework.memory.session_manager import create_session_manager
 from agent_framework.observability.langsmith import LangSmithTracer
 from agent_framework.runtime.orchestrator import Orchestrator
 from agent_framework.sdk.guardrails import GuardrailPolicyProtocol
@@ -25,16 +25,23 @@ class AgentPlatformLibrary:
     """Composition root for embedding configured agents in a host application."""
 
     spec: AgentSpec = field(default_factory=AgentSpec)
-    llm_client: LlmClientProtocol = field(default_factory=LlmClient)
+    llm_client: LlmClientProtocol | None = None
     guardrail_policy: GuardrailPolicyProtocol = field(default_factory=AllowAllGuardrail)
-    session_manager: SessionManagerProtocol = field(default_factory=SessionManager)
+    session_manager: SessionManagerProtocol | None = None
     tracer: TracerProtocol = field(default_factory=LangSmithTracer)
     registry: ToolRegistry = field(default_factory=ToolRegistry)
     _workflows: dict[str, WorkflowHandler] = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, path: str | Path, **overrides) -> "AgentPlatformLibrary":
-        return cls(spec=load_agent_spec(path), **overrides)
+        return cls(spec=load_agent_spec(path), **overrides).bootstrap()
+
+    def bootstrap(self) -> "AgentPlatformLibrary":
+        if self.llm_client is None:
+            self.llm_client = create_llm_client(self.spec.model)
+        if self.session_manager is None:
+            self.session_manager = create_session_manager(self.spec.persistence)
+        return self
 
     def register_tool(self, tool: BaseTool) -> None:
         self.registry.register(tool)
@@ -46,6 +53,7 @@ class AgentPlatformLibrary:
         self._workflows[name] = handler
 
     def build(self) -> Orchestrator:
+        self.bootstrap()
         orchestrator = Orchestrator(
             spec=self.spec,
             registry=self.registry,

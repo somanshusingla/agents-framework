@@ -1,55 +1,33 @@
 from __future__ import annotations
 
-import json
 from typing import AsyncIterator
 
+from agent_framework.config import ModelSpec
+from agent_framework.llm.factory import LlmClientFactory, default_llm_client_factory
 from agent_framework.llm.types import LlmRequest, LlmResponse
 
 
 class LlmClient:
-    """Small deterministic default client used for tests and local smoke runs.
+    """Factory-backed default LLM client.
 
-    Production users should inject a provider-backed implementation through the SDK.
+    The provider and model come from ``ModelSpec``. Hosts can inject any object
+    matching ``LlmClientProtocol`` or register additional providers with the
+    default factory.
     """
 
+    def __init__(
+        self,
+        spec: ModelSpec | None = None,
+        *,
+        factory: LlmClientFactory | None = None,
+    ) -> None:
+        self.spec = spec or ModelSpec()
+        self._factory = factory or default_llm_client_factory
+        self._client = self._factory.create(self.spec)
+
     async def complete(self, request: LlmRequest) -> LlmResponse:
-        tool_messages = [message for message in request.messages if message.role == "tool"]
-        if tool_messages:
-            latest = tool_messages[-1]
-            text = f"Tool result received from {latest.name}: {latest.content}"
-            return LlmResponse(
-                text=text,
-                usage={
-                    "input_tokens": _rough_token_count(request.input_text),
-                    "output_tokens": _rough_token_count(text),
-                },
-            )
-
-        text = f"Echo: {request.input_text}"
-        tool_calls: list[dict] = []
-        if request.input_text.startswith("tool:"):
-            try:
-                prefix, payload = request.input_text.split(" ", 1)
-                name = prefix.split(":", 1)[1]
-                args = json.loads(payload)
-                tool_calls = [{"id": "call-1", "name": name, "args": args}]
-                text = "Calling tool"
-            except Exception:
-                text = "Malformed tool call instruction"
-
-        return LlmResponse(
-            text=text,
-            tool_calls=tool_calls,
-            usage={
-                "input_tokens": _rough_token_count(request.input_text),
-                "output_tokens": _rough_token_count(text),
-            },
-        )
+        return await self._client.complete(request)
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[str]:
-        for token in ("Echo:", *request.input_text.split()):
-            yield token
-
-
-def _rough_token_count(text: str) -> int:
-    return max(1, len((text or "").split()))
+        async for chunk in self._client.stream(request):
+            yield chunk

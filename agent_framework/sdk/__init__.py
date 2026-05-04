@@ -10,7 +10,21 @@ from agent_framework.sdk.compaction import (
     create_compaction_strategy,
 )
 from agent_framework.sdk.guardrails import GuardrailPolicyProtocol
-from agent_framework.sdk.llm import LlmClientProtocol
+from agent_framework.sdk.llm import (
+    LlmClientFactory,
+    LlmClientProtocol,
+    create_llm_client,
+    llm_provider,
+    register_llm_provider,
+)
+from agent_framework.memory.session_manager import (
+    InMemorySessionManager,
+    NoOpSessionManager,
+    SessionManager,
+    create_session_manager,
+    register_session_backend,
+    session_backend,
+)
 from agent_framework.sdk.sessions import SessionManagerProtocol
 from agent_framework.sdk.tools import (
     AgentTool,
@@ -31,9 +45,13 @@ __all__ = [
     "FinalReportCompactionStrategy",
     "FunctionTool",
     "GuardrailPolicyProtocol",
+    "InMemorySessionManager",
+    "LlmClientFactory",
     "LlmClientProtocol",
+    "NoOpSessionManager",
     "RawJsonLogsCompactionStrategy",
     "ReferenceCompactionStrategy",
+    "SessionManager",
     "SessionManagerProtocol",
     "ToolCompactionStrategy",
     "ToolExecutionContext",
@@ -41,6 +59,12 @@ __all__ = [
     "TracerProtocol",
     "TruncateCompactionStrategy",
     "create_compaction_strategy",
+    "create_llm_client",
+    "create_session_manager",
+    "llm_provider",
+    "register_llm_provider",
+    "register_session_backend",
+    "session_backend",
 ]
 
 

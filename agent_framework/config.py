@@ -8,11 +8,16 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class ModelSpec(BaseModel):
-    provider: str = "test"
-    name: str = "echo"
+    provider: str = "openai"
+    name: str = "gpt-5.4-mini"
     temperature: float = 0.0
     max_tokens: int = 4096
     api_base: str | None = None
+    api_key: str | None = None
+    api_key_env: str | None = None
+    timeout_seconds: float = 60.0
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolsSpec(BaseModel):
@@ -23,6 +28,10 @@ class ToolsSpec(BaseModel):
 class SummarizationSpec(BaseModel):
     enabled: bool = True
     keep_recent: int = 5
+    strategy: Literal["llm", "deterministic", "none"] = "llm"
+    provider: str | None = None
+    model: str | None = None
+    max_summary_tokens: int = 1024
 
 
 class ContextSpec(BaseModel):
@@ -46,6 +55,11 @@ class HooksSpec(BaseModel):
     tool_call_policy: str | None = None
 
 
+class PersistenceSpec(BaseModel):
+    backend: str = "sqlite"
+    db_url: str | None = None
+
+
 class AgentSpec(BaseModel):
     name: str = "default"
     description: str = ""
@@ -57,6 +71,7 @@ class AgentSpec(BaseModel):
     runtime: RuntimeSpec = Field(default_factory=RuntimeSpec)
     context: ContextSpec = Field(default_factory=ContextSpec)
     hooks: HooksSpec = Field(default_factory=HooksSpec)
+    persistence: PersistenceSpec = Field(default_factory=PersistenceSpec)
 
     @model_validator(mode="after")
     def validate_workflow(self) -> "AgentSpec":

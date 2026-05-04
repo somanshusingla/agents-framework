@@ -1,11 +1,71 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from agent_framework.config import ContextSpec
 from agent_framework.llm.types import LlmMessage
+from agent_framework.llm.types import LlmRequest
 from agent_framework.sdk.compaction import ToolCompactionStrategy, create_compaction_strategy
+
+
+class ContextSummarizer(Protocol):
+    async def summarize(
+        self,
+        messages: list[LlmMessage],
+        *,
+        state: dict[str, Any],
+        max_tokens: int,
+    ) -> str: ...
+
+
+class DeterministicContextSummarizer:
+    async def summarize(
+        self,
+        messages: list[LlmMessage],
+        *,
+        state: dict[str, Any],
+        max_tokens: int,
+    ) -> str:
+        return _format_summary(messages)
+
+
+class LlmContextSummarizer:
+    def __init__(self, llm_client: Any) -> None:
+        self._llm_client = llm_client
+
+    async def summarize(
+        self,
+        messages: list[LlmMessage],
+        *,
+        state: dict[str, Any],
+        max_tokens: int,
+    ) -> str:
+        response = await self._llm_client.complete(
+            LlmRequest(
+                messages=[
+                    LlmMessage(
+                        role="system",
+                        content=(
+                            "Summarize prior agent work for future reasoning. Preserve user intent, "
+                            "decisions, constraints, tool results, unresolved questions, and any "
+                            "facts needed to continue. Keep it compact and do not invent details."
+                        ),
+                    ),
+                    LlmMessage(
+                        role="user",
+                        content=(
+                            f"Run id: {state.get('run_id', '')}\n"
+                            f"Thread id: {state.get('thread_id', '')}\n"
+                            f"Maximum summary tokens: {max_tokens}\n\n"
+                            f"{_format_transcript_for_summary(messages)}"
+                        ),
+                    ),
+                ],
+                metadata={"purpose": "context_summarization"},
+            )
+        )
+        return response.text.strip() or _format_summary(messages)
 
 
 @dataclass(slots=True)
@@ -21,12 +81,23 @@ class ContextOptimizer:
         self,
         context_spec: ContextSpec | None = None,
         strategies: dict[str, ToolCompactionStrategy] | None = None,
+        summarizer: ContextSummarizer | None = None,
     ) -> None:
         self._spec = context_spec or ContextSpec()
         self._strategies = strategies or {}
         self._default_strategy = create_compaction_strategy(self._spec.default_tool_strategy)
+        self._summarizer = summarizer or DeterministicContextSummarizer()
 
     def project(
+        self,
+        messages: list[LlmMessage],
+        *,
+        state: dict[str, Any] | None = None,
+        force: bool = False,
+    ) -> ContextProjection:
+        return self._project_sync(messages, state=state, force=force)
+
+    async def project_async(
         self,
         messages: list[LlmMessage],
         *,
@@ -50,10 +121,61 @@ class ContextOptimizer:
 
         if (
             self._spec.summarization.enabled
+            and self._spec.summarization.strategy != "none"
             and after_compaction >= self._spec.token_threshold
             and len(compacted) > self._spec.summarization.keep_recent + 2
         ):
-            compacted = self._summarize_old_messages(compacted, state or {})
+            compacted = await self._summarize_old_messages(
+                compacted,
+                state if state is not None else {},
+            )
+            summary_added = True
+
+        after = count_messages(compacted)
+        return ContextProjection(
+            compacted,
+            {
+                "before_tokens": before,
+                "after_tokens": after,
+                "before_msgs": len(messages),
+                "after_msgs": len(compacted),
+                "compacted_tool_messages": compacted_count,
+                "summary_added": summary_added,
+            },
+        )
+
+    def _project_sync(
+        self,
+        messages: list[LlmMessage],
+        *,
+        state: dict[str, Any] | None = None,
+        force: bool = False,
+    ) -> ContextProjection:
+        if self._spec.strategy == "none":
+            return ContextProjection(list(messages), None)
+
+        before = count_messages(messages)
+        oversized_tool_result = any(
+            message.role == "tool" and len(message.content or "") > self._spec.tool_result_threshold
+            for message in messages
+        )
+        if not force and before < self._spec.token_threshold and not oversized_tool_result:
+            return ContextProjection(list(messages), None)
+
+        compacted, compacted_count = self._compact_tool_messages(messages)
+        after_compaction = count_messages(compacted)
+        summary_added = False
+
+        if (
+            self._spec.summarization.enabled
+            and self._spec.summarization.strategy != "none"
+            and after_compaction >= self._spec.token_threshold
+            and len(compacted) > self._spec.summarization.keep_recent + 2
+        ):
+            compacted = self._summarize_old_messages_sync(
+                compacted,
+                state if state is not None else {},
+            )
             summary_added = True
 
         after = count_messages(compacted)
@@ -112,11 +234,49 @@ class ContextOptimizer:
 
         return projected, compacted_count
 
-    def _summarize_old_messages(
+    async def _summarize_old_messages(
         self,
         messages: list[LlmMessage],
         state: dict[str, Any],
     ) -> list[LlmMessage]:
+        preserved_start, preserved_end, to_summarize = self._summary_slices(messages, state)
+        if not to_summarize:
+            return messages
+
+        summary = await self._summarizer.summarize(
+            to_summarize,
+            state=state,
+            max_tokens=self._spec.summarization.max_summary_tokens,
+        )
+        state["last_summary_index"] = len(preserved_start)
+        return [
+            *preserved_start,
+            LlmMessage(role="system", content=f"[Previous work summary]\n{summary}"),
+            *preserved_end,
+        ]
+
+    def _summarize_old_messages_sync(
+        self,
+        messages: list[LlmMessage],
+        state: dict[str, Any],
+    ) -> list[LlmMessage]:
+        preserved_start, preserved_end, to_summarize = self._summary_slices(messages, state)
+        if not to_summarize:
+            return messages
+
+        summary = _format_summary(to_summarize)
+        state["last_summary_index"] = len(preserved_start)
+        return [
+            *preserved_start,
+            LlmMessage(role="system", content=f"[Previous work summary]\n{summary}"),
+            *preserved_end,
+        ]
+
+    def _summary_slices(
+        self,
+        messages: list[LlmMessage],
+        state: dict[str, Any],
+    ) -> tuple[list[LlmMessage], list[LlmMessage], list[LlmMessage]]:
         first_user_idx = next(
             (index for index, message in enumerate(messages) if message.role == "user"),
             0,
@@ -125,18 +285,12 @@ class ContextOptimizer:
         summary_end = max(len(messages) - keep_recent, first_user_idx + 1)
         summary_start = int(state.get("last_summary_index", first_user_idx))
         if summary_end <= summary_start + 1:
-            return messages
+            return messages, [], []
 
         preserved_start = messages[: summary_start + 1]
         preserved_end = messages[summary_end:]
         to_summarize = messages[summary_start + 1 : summary_end]
-        summary = _format_summary(to_summarize)
-        state["last_summary_index"] = len(preserved_start)
-        return [
-            *preserved_start,
-            LlmMessage(role="system", content=f"[Previous work summary]\n{summary}"),
-            *preserved_end,
-        ]
+        return preserved_start, preserved_end, to_summarize
 
 
 def count_messages(messages: list[LlmMessage]) -> int:
@@ -170,4 +324,19 @@ def _format_summary(messages: list[LlmMessage]) -> str:
             lines.append(f"- {message.role}: {preview}")
     if len(messages) > 30:
         lines.append(f"- {len(messages) - 30} additional message(s) omitted from summary.")
+    return "\n".join(lines)
+
+
+def _format_transcript_for_summary(messages: list[LlmMessage]) -> str:
+    lines = ["Summarize this prior execution transcript:"]
+    for index, message in enumerate(messages, start=1):
+        label = message.role
+        if message.name:
+            label += f":{message.name}"
+        text = (message.content or "").replace("\r\n", "\n").strip()
+        if len(text) > 2_000:
+            text = f"{text[:2_000]}\n[truncated {len(text) - 2_000} chars]"
+        lines.append(f"\n[{index}] {label}\n{text}")
+        if message.tool_calls:
+            lines.append(f"tool_calls={message.tool_calls}")
     return "\n".join(lines)
